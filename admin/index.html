@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="hi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Smart Exam Academy — एडमिन पैनल</title>
+  <link rel="stylesheet" href="style.css">
+  <script src="config.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><span class="logo">SEA</span><div><b>Smart Exam Academy</b><small>एडमिन पैनल</small></div></div>
+    <div id="who" class="who"></div>
+  </header>
+
+  <!-- Login -->
+  <section id="login" class="card narrow hidden">
+    <h2>एडमिन लॉग इन</h2>
+    <p class="muted">अपना एडमिन ईमेल डालें। ईमेल में आए “Sign in” लिंक को इसी ब्राउज़र में खोलें, या 6 अंकों का कोड हो तो नीचे डालें।</p>
+    <label>ईमेल<input id="email" type="email" placeholder="you@gmail.com" autocomplete="email"></label>
+    <button id="sendOtp" class="primary">लॉग इन ईमेल भेजें</button>
+    <div id="otpBox" class="hidden">
+      <label>6 अंकों का कोड<input id="otp" inputmode="numeric" maxlength="6" placeholder="123456"></label>
+      <button id="verifyOtp" class="primary">कोड से लॉग इन</button>
+    </div>
+    <p id="loginMsg" class="msg"></p>
+  </section>
+
+  <section id="denied" class="card narrow hidden">
+    <h2>अनुमति नहीं है</h2>
+    <p>यह खाता एडमिन सूची में नहीं है। किसी मौजूदा एडमिन से अपना ईमेल <code>admins</code> टेबल में जुड़वाएँ।</p>
+    <button class="logout">लॉग आउट</button>
+  </section>
+
+  <!-- App -->
+  <main id="app" class="hidden">
+    <nav id="tabs" class="tabs"></nav>
+    <div id="view"></div>
+  </main>
+
+  <!-- Modal -->
+  <dialog id="modal"><form method="dialog" id="modalForm"><h3 id="modalTitle"></h3><div id="modalBody"></div>
+    <div class="row end"><button value="cancel" formnovalidate>रद्द करें</button><button id="modalSave" value="ok" class="primary">सेव करें</button></div>
+  </form></dialog>
+
+  <div id="toast" class="toast"></div>
+  <script src="app.js"></script>
+</body>
+</html>
