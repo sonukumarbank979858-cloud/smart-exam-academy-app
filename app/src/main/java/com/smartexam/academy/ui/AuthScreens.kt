@@ -82,7 +82,7 @@ fun LoginScreen(linkError: String? = null, onDone: () -> Unit) {
             try {
                 repo.supa.sendOtp(e)
                 sent = true; cooldown = 60
-                info = "$e पर ईमेल भेजा गया है (स्पैम फ़ोल्डर भी देखें)। ईमेल में “Sign in” लिंक को इसी फ़ोन पर दबाएँ — ऐप अपने-आप खुलकर लॉग इन हो जाएगा। ईमेल में 6 अंकों का कोड हो तो नीचे लिखें।"
+                info = "$e पर 6 अंकों का OTP भेजा गया है। ईमेल (या स्पैम फ़ोल्डर) से कोड देखकर नीचे लिखें।"
             } catch (ex: Exception) { error = friendly(ex) }
             busy = false
         }
@@ -108,9 +108,9 @@ fun LoginScreen(linkError: String? = null, onDone: () -> Unit) {
         Spacer(Modifier.height(36.dp))
         Surface(shape = RoundedCornerShape(22.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(20.dp)) {
-                Text(if (!sent) "लॉग इन / साइन अप" else "ईमेल देखें", fontWeight = FontWeight.Bold, fontSize = 20.sp)
+                Text(if (!sent) "लॉग इन / साइन अप" else "OTP डालें", fontWeight = FontWeight.Bold, fontSize = 20.sp)
                 Text(
-                    if (!sent) "अपना ईमेल डालें, हम उस पर लॉग इन लिंक / OTP भेजेंगे।" else "ईमेल के लिंक से या कोड से लॉग इन करें।",
+                    if (!sent) "अपना ईमेल डालें, हम उस पर 6 अंकों का OTP भेजेंगे।" else "ईमेल में आया OTP नीचे लिखें।",
                     fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(16.dp))
@@ -123,8 +123,8 @@ fun LoginScreen(linkError: String? = null, onDone: () -> Unit) {
                 if (sent) {
                     Spacer(Modifier.height(12.dp))
                     OutlinedTextField(
-                        value = code, onValueChange = { v -> code = v.filter { it.isDigit() }.take(6) },
-                        label = { Text("6 अंकों का कोड (अगर ईमेल में हो)") }, leadingIcon = { Icon(Icons.Default.Lock, null) },
+                        value = code, onValueChange = { v -> code = v.filter { it.isDigit() }.take(6); if (code.length == 6 && !busy) verify() },
+                        label = { Text("6 अंकों का OTP") }, leadingIcon = { Icon(Icons.Default.Lock, null) },
                         singleLine = true, enabled = !busy, modifier = Modifier.fillMaxWidth(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword)
                     )
@@ -133,12 +133,12 @@ fun LoginScreen(linkError: String? = null, onDone: () -> Unit) {
                 error?.let { Spacer(Modifier.height(8.dp)); Text(it, fontSize = 13.sp, color = MaterialTheme.colorScheme.error) }
                 Spacer(Modifier.height(16.dp))
                 if (!sent) {
-                    BigButton(if (busy) "भेजा जा रहा है…" else "लॉग इन ईमेल भेजें", enabled = !busy) { send() }
+                    BigButton(if (busy) "भेजा जा रहा है…" else "OTP भेजें", enabled = !busy) { send() }
                 } else {
-                    BigButton(if (busy) "जाँच हो रही है…" else "कोड से लॉग इन करें", enabled = !busy) { verify() }
+                    BigButton(if (busy) "जाँच हो रही है…" else "लॉग इन करें", enabled = !busy) { verify() }
                     Spacer(Modifier.height(6.dp))
                     TextButton(onClick = { send() }, enabled = !busy && cooldown == 0, modifier = Modifier.align(Alignment.CenterHorizontally)) {
-                        Text(if (cooldown > 0) "ईमेल दोबारा भेजें (${cooldown}s)" else "ईमेल दोबारा भेजें")
+                        Text(if (cooldown > 0) "OTP दोबारा भेजें (${cooldown}s)" else "OTP दोबारा भेजें")
                     }
                 }
             }
