@@ -61,11 +61,15 @@ Deno.serve(async (req) => {
   const errs: string[] = [];
   for (const model of MODELS) for (let attempt = 0; attempt < 2; attempt++) {
     if (attempt > 0) await new Promise((res) => setTimeout(res, 1200));
-    const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+    let r: Response;
+    try {
+      r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
+      signal: AbortSignal.timeout(40000),
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify(payload),
-    });
+      });
+    } catch (e) { errs.push(`${model}: timeout/network ${e}`); break; }
     const t = await r.text();
     if (!r.ok) {
       lastErr = `${model}: ${r.status} ${t.slice(0, 200)}`; errs.push(lastErr);
