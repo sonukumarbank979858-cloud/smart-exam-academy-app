@@ -4,7 +4,7 @@
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const ANON = Deno.env.get("SUPABASE_ANON_KEY")!;
 const GEMINI_KEY = Deno.env.get("GEMINI_API_KEY") ?? "";
-const MODELS = [Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest", "gemini-2.5-flash", "gemini-2.0-flash"];
+const MODELS = [...new Set([Deno.env.get("GEMINI_MODEL") ?? "gemini-flash-latest", "gemini-2.5-flash", "gemini-flash-lite-latest", "gemini-2.5-flash-lite"])];
 
 const cors = {
   "Access-Control-Allow-Origin": "*",
@@ -58,21 +58,28 @@ Deno.serve(async (req) => {
   };
 
   let lastErr = "";
-  for (const model of MODELS) {
+  const errs: string[] = [];
+  for (const model of MODELS) for (let attempt = 0; attempt < 2; attempt++) {
+    if (attempt > 0) await new Promise((res) => setTimeout(res, 1200));
     const r = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_KEY },
       body: JSON.stringify(payload),
     });
     const t = await r.text();
-    if (!r.ok) { lastErr = `${model}: ${r.status} ${t.slice(0, 300)}`; if (r.status === 404 || r.status >= 500 || r.status === 429) continue; break; }
+    if (!r.ok) {
+      lastErr = `${model}: ${r.status} ${t.slice(0, 200)}`; errs.push(lastErr);
+      if (r.status >= 500 || r.status === 429) continue;   // retry, then next model
+      break;                                              // 4xx: next model
+    }
     try {
       const d = JSON.parse(t);
       const reply = (d.candidates?.[0]?.content?.parts ?? []).map((p: { text?: string }) => p.text ?? "").join("").trim();
       if (reply) return json({ reply, ready: true, model, is_admin: !!ctx?.is_admin });
-      lastErr = `${model}: empty reply`;
-    } catch (e) { lastErr = `${model}: ${e}`; }
+      lastErr = `${model}: empty reply ${t.slice(0, 200)}`; errs.push(lastErr);
+      break;
+    } catch (e) { lastErr = `${model}: ${e}`; errs.push(lastErr); break; }
   }
-  console.error("gemini failed", lastErr);
-  return json({ reply: "माफ़ कीजिए, AI गुरु अभी जवाब नहीं दे पा रहे। थोड़ी देर बाद फिर पूछें।", ready: true, error: lastErr.slice(0, 200) });
+  console.error("gemini failed", errs.join(" | "));
+  return json({ reply: "माफ़ कीजिए, AI गुरु अभी जवाब नहीं दे पा रहे। थोड़ी देर बाद फिर पूछें।", ready: true, error: errs.map((e) => e.slice(0, 120)).join(" | ").slice(0, 600) });
 });
