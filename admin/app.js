@@ -21,11 +21,11 @@
     const email = $("#email").value.trim();
     if (!email) return ($("#loginMsg").textContent = "ईमेल लिखें");
     $("#sendOtp").disabled = true;
-    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true, emailRedirectTo: redirect } });
+    const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
     $("#sendOtp").disabled = false;
-    if (error) return ($("#loginMsg").textContent = error.message);
+    if (error) return ($("#loginMsg").textContent = /signup|not allowed/i.test(error.message) ? "यह ईमेल पंजीकृत नहीं है। पहले ऐप में साइन अप करें, फिर एडमिन सूची में जुड़वाएँ।" : error.message);
     $("#otpBox").classList.remove("hidden");
-    $("#loginMsg").textContent = "ईमेल भेजा गया। उसमें आया लिंक इसी ब्राउज़र में खोलें, या 6 अंकों का कोड नीचे डालें।";
+    $("#loginMsg").textContent = "OTP भेजा गया। ईमेल (या स्पैम) में आया 6 अंकों का कोड नीचे डालें।";
   };
   $("#verifyOtp").onclick = async () => {
     const { error } = await sb.auth.verifyOtp({ email: $("#email").value.trim(), token: $("#otp").value.trim(), type: "email" });
@@ -68,7 +68,7 @@
       fields: [F("image_url", "इमेज URL (लगभग 1200×500)", "text", { req: 1 }), F("link", "क्लिक पर लिंक"), F("active", "सक्रिय", "bool", { def: true }), F("sort", "क्रम", "number")] },
     admins: { title: "एडमिन", table: "admins", key: "email", cols: ["email"], noEdit: true, fields: [F("email", "एडमिन ईमेल", "text", { req: 1 })] },
   };
-  const TABS = [["dashboard", "डैशबोर्ड"], ["categories", "श्रेणियाँ"], ["exams", "परीक्षाएँ"], ["packs", "पैक"], ["tests", "टेस्ट"],
+  const TABS = [["dashboard", "डैशबोर्ड"], ["students", "छात्र"], ["notify", "सूचनाएँ"], ["ai", "AI गुरु"], ["categories", "श्रेणियाँ"], ["exams", "परीक्षाएँ"], ["packs", "पैक"], ["tests", "टेस्ट"],
     ["sections", "सेक्शन"], ["questions", "प्रश्न"], ["banners", "बैनर"], ["users", "उपयोगकर्ता"], ["admins", "एडमिन"]];
   const parentSel = {}; // ent -> selected parent id
   let current = "dashboard";
@@ -82,6 +82,9 @@
     document.querySelectorAll("#tabs button").forEach((b) => b.classList.toggle("on", b.dataset.tab === k));
     if (k === "dashboard") return renderDashboard();
     if (k === "users") return renderUsers();
+    if (k === "students") return renderStudents();
+    if (k === "notify") return renderNotify();
+    if (k === "ai") return renderAi();
     return renderList(k);
   }
   const fail = (error) => { if (error) { toast("त्रुटि: " + error.message); throw error; } };
@@ -106,6 +109,97 @@
     if (error) return ($("#stats").textContent = error.message);
     const L = { users: "उपयोगकर्ता (लॉग इन)", profiles: "प्रोफ़ाइल बनी", attempts: "कुल प्रयास", tests: "टेस्ट", questions: "प्रश्न" };
     $("#stats").innerHTML = Object.entries(L).map(([k, l]) => `<div class="stat"><b>${esc(data[k])}</b>${l}</div>`).join("");
+    const r = await sb.rpc("admin_recent_submissions", { p_limit: 8 });
+    if (!r.error && r.data.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>हाल के सबमिशन</h2><div class="feed">${r.data.map((a) => `<div class="it"><b>${esc(a.student)}</b> — ${esc(a.test_title || "")}: <span class="score">${num(a.score)}/${num(a.max_marks)}</span><small>${esc(fmtT(a.created_at))}</small></div>`).join("")}</div></div>`);
+  }
+
+  // ───────── Students ─────────
+  const fmtT = (v) => (v ? new Date(v).toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "—");
+  const num = (v) => (v === null || v === undefined ? "—" : Number(v).toLocaleString("en-IN", { maximumFractionDigits: 2 }));
+  async function renderStudents() {
+    $("#view").innerHTML = `<div class="card"><h2>छात्र (Students)</h2><input id="stuQ" placeholder="नाम / ईमेल / राज्य से खोजें" style="max-width:360px"><div id="slist" style="margin-top:12px">लोड हो रहा है…</div></div><div id="sdetail"></div>`;
+    const { data, error } = await sb.rpc("admin_students");
+    if (error) return ($("#slist").textContent = error.message);
+    const draw = (q) => {
+      const rows = data.filter((u) => !q || [u.full_name, u.email, u.state, u.exam_interest].join(" ").toLowerCase().includes(q));
+      $("#slist").innerHTML = `<p class="muted">कुल ${rows.length} छात्र • किसी पंक्ति पर क्लिक करें</p><div style="overflow:auto"><table><tr><th>नाम</th><th>ईमेल</th><th>राज्य</th><th>तैयारी</th><th>टेस्ट दिए</th><th>औसत अंक</th><th>औसत %</th><th>आख़िरी सक्रियता</th></tr>
+        ${rows.map((u) => `<tr class="click" data-u="${esc(u.id)}" data-n="${esc(u.full_name || u.email)}"><td><b>${esc(u.full_name || "—")}</b></td><td>${esc(u.email)}</td><td>${esc(u.state || "")}</td><td>${esc(u.exam_interest || "")}</td>
+        <td class="score">${esc(u.tests_taken)}</td><td>${num(u.avg_score)}</td><td>${u.avg_pct === null ? "—" : num(u.avg_pct) + "%"}</td><td>${esc(fmtT(u.last_active))}</td></tr>`).join("")}</table></div>`;
+    };
+    draw("");
+    $("#stuQ").oninput = (e) => draw(e.target.value.trim().toLowerCase());
+    $("#slist").onclick = async (e) => {
+      const tr = e.target.closest("tr[data-u]"); if (!tr) return;
+      $("#sdetail").innerHTML = `<div class="card"><h2>${esc(tr.dataset.n)} — प्रयास</h2><div id="sat">लोड हो रहा है…</div></div>`;
+      const r = await sb.rpc("admin_student_attempts", { p_user: tr.dataset.u });
+      if (r.error) return ($("#sat").textContent = r.error.message);
+      $("#sat").innerHTML = r.data.length ? `<div style="overflow:auto"><table><tr><th>टेस्ट</th><th>अंक</th><th>सही</th><th>ग़लत</th><th>छोड़े</th><th>समय</th><th>कब</th></tr>
+        ${r.data.map((a) => `<tr><td>${esc(a.test_title || "—")}</td><td class="score">${num(a.score)} / ${num(a.max_marks)}</td><td>${a.correct}</td><td>${a.wrong}</td><td>${a.skipped}</td><td>${Math.round(a.time_taken_sec / 60)} मि</td><td>${esc(fmtT(a.created_at))}</td></tr>`).join("")}</table></div>`
+        : `<p class="muted">इस छात्र ने अभी कोई टेस्ट नहीं दिया।</p>`;
+      $("#sdetail").scrollIntoView({ behavior: "smooth" });
+    };
+  }
+
+  // ───────── Notifications ─────────
+  async function renderNotify() {
+    $("#view").innerHTML = `<div class="grid-2">
+      <div class="card"><h2>सूचना भेजें</h2>
+        <label>किसे<select id="nAud"><option value="all">सभी छात्र (Broadcast)</option><option value="user">एक छात्र</option></select></label>
+        <label id="nUserL" class="hidden">छात्र<select id="nUser"></select></label>
+        <label>शीर्षक<input id="nTitle" maxlength="120" placeholder="जैसे: कल नया मॉक टेस्ट आएगा"></label>
+        <label>संदेश<textarea id="nBody" maxlength="1000"></textarea></label>
+        <button class="primary" id="nSend">भेजें</button>
+        <p class="muted">ऐप में बेल पर दिखेगी और लगभग 15 मिनट में फ़ोन पर नोटिफ़िकेशन आएगा।</p>
+        <h3 style="margin-top:22px">हाल में भेजी गई</h3><div class="feed" id="nSent">…</div>
+      </div>
+      <div class="card"><h2>छात्रों के सबमिशन (Live feed)</h2><button class="small" id="nRef">↻ रीफ़्रेश</button><div class="feed" id="nFeed" style="margin-top:10px">लोड हो रहा है…</div></div>
+    </div>`;
+    const studs = await sb.rpc("admin_students");
+    $("#nUser").innerHTML = (studs.data || []).map((u) => `<option value="${esc(u.id)}">${esc((u.full_name || "—") + " • " + u.email)}</option>`).join("");
+    $("#nAud").onchange = (e) => $("#nUserL").classList.toggle("hidden", e.target.value !== "user");
+    $("#nSend").onclick = async () => {
+      const title = $("#nTitle").value.trim(), body = $("#nBody").value.trim(), aud = $("#nAud").value;
+      if (!title) return toast("शीर्षक लिखें");
+      const row = { title, body, type: "announcement", audience: aud, user_id: aud === "user" ? $("#nUser").value : null };
+      const { error } = await sb.from("notifications").insert(row); fail(error);
+      toast("सूचना भेज दी गई ✓"); $("#nTitle").value = ""; $("#nBody").value = ""; loadSent();
+    };
+    const loadSent = async () => {
+      const { data, error } = await sb.from("notifications").select("*").neq("audience", "admins").order("created_at", { ascending: false }).limit(25);
+      $("#nSent").innerHTML = error ? esc(error.message) : data.length ? data.map((n) => `<div class="it"><b>${esc(n.title)}</b> <span class="pill ${n.audience === "all" ? "on" : "off"}">${n.audience === "all" ? "सभी" : n.audience === "user" ? "एक छात्र" : n.audience}</span><div>${esc(n.body || "")}</div><small>${esc(fmtT(n.created_at))} • ${esc(n.type)}</small></div>`).join("") : `<p class="muted">अभी कुछ नहीं।</p>`;
+    };
+    const loadFeed = async () => {
+      const { data, error } = await sb.rpc("admin_recent_submissions", { p_limit: 60 });
+      $("#nFeed").innerHTML = error ? esc(error.message) : data.length ? data.map((a) => `<div class="it"><b>${esc(a.student)}</b> ने <b>${esc(a.test_title || "टेस्ट")}</b> दिया — <span class="score">${num(a.score)}/${num(a.max_marks)}</span> <small>सही ${a.correct} • ग़लत ${a.wrong} • ${Math.round(a.time_taken_sec / 60)} मि • ${esc(a.email || "")} • ${esc(fmtT(a.created_at))}</small></div>`).join("") : `<p class="muted">अभी कोई सबमिशन नहीं।</p>`;
+    };
+    $("#nRef").onclick = loadFeed;
+    loadSent(); loadFeed();
+  }
+
+  // ───────── AI गुरु (admin) ─────────
+  const aiHistory = [];
+  async function renderAi() {
+    $("#view").innerHTML = `<div class="card"><h2>AI गुरु (एडमिन)</h2><p class="muted">सभी छात्रों के टेस्ट और अंकों के बारे में हिंदी में पूछें।</p>
+      <div class="sugg">${["किस छात्र ने कौन सा टेस्ट दिया, कितने अंक?", "सबसे अच्छा प्रदर्शन किसका है?", "किन छात्रों को मदद की ज़रूरत है?", "इस हफ़्ते कितने टेस्ट दिए गए?"].map((q) => `<button data-q="${esc(q)}">${esc(q)}</button>`).join("")}</div>
+      <div class="chat" id="aiChat"></div>
+      <div class="row" style="margin-top:10px"><input id="aiIn" placeholder="AI गुरु से पूछें…" style="flex:1;margin:0"><button class="primary" id="aiSend">भेजें</button><button id="aiClear">नई बातचीत</button></div></div>`;
+    const draw = () => { $("#aiChat").innerHTML = aiHistory.length ? aiHistory.map((m) => `<div class="bub ${m.role === "user" ? "me" : "ai"}">${esc(m.text.replace(/\*\*/g, ""))}</div>`).join("") : `<p class="muted">नमस्ते! 🙏 नीचे सवाल लिखें या ऊपर का सुझाव चुनें।</p>`; $("#aiChat").scrollTop = 1e9; };
+    const ask = async (q) => {
+      q = (q || "").trim(); if (!q) return;
+      const history = aiHistory.slice(-12);
+      aiHistory.push({ role: "user", text: q }); $("#aiIn").value = ""; draw();
+      $("#aiChat").insertAdjacentHTML("beforeend", `<div class="bub ai" id="aiWait">सोच रहे हैं…</div>`);
+      $("#aiSend").disabled = true;
+      const { data, error } = await sb.functions.invoke("ai-coach", { body: { message: q, history } });
+      $("#aiSend").disabled = false;
+      aiHistory.push({ role: "model", text: error ? "⚠ " + error.message : data.reply || data.error || "कोई जवाब नहीं" });
+      draw();
+    };
+    draw();
+    $("#aiSend").onclick = () => ask($("#aiIn").value);
+    $("#aiIn").onkeydown = (e) => { if (e.key === "Enter") ask($("#aiIn").value); };
+    $("#aiClear").onclick = () => { aiHistory.length = 0; draw(); };
+    document.querySelector(".sugg").onclick = (e) => { const b = e.target.closest("button[data-q]"); if (b) ask(b.dataset.q); };
   }
 
   // ───────── Users ─────────

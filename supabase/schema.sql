@@ -354,5 +354,264 @@ begin
 end $$;
 grant execute on function public.admin_users() to authenticated;
 
--- Ask PostgREST to pick up the new objects right away.
+-- ═════════════════════════ v2: notifications, students, AI context ═════════════════════════
+-- Idempotent. Applied after the base schema.
+
+-- Profiles: extra sign-up fields
+alter table public.profiles add column if not exists email text;
+alter table public.profiles add column if not exists exam_interest text;
+
+-- New auth users get a profile from their sign-up metadata (never blocks a sign-up)
+create or replace function public.handle_new_user()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+begin
+  begin
+    insert into public.profiles(id, email, full_name, phone, state, exam_interest)
+    values (new.id, new.email,
+            nullif(new.raw_user_meta_data ->> 'full_name', ''),
+            nullif(new.raw_user_meta_data ->> 'phone', ''),
+            nullif(new.raw_user_meta_data ->> 'state', ''),
+            nullif(new.raw_user_meta_data ->> 'exam_interest', ''))
+    on conflict (id) do nothing;
+  exception when others then null;
+  end;
+  return new;
+end $$;
+drop trigger if exists on_auth_user_created on auth.users;
+create trigger on_auth_user_created after insert on auth.users
+  for each row execute function public.handle_new_user();
+
+-- ───────── Notifications ─────────
+create table if not exists public.notifications (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users(id) on delete cascade,   -- null = broadcast
+  audience text not null default 'all' check (audience in ('all','user','admins')),
+  title text not null,
+  body text,
+  type text not null default 'info',
+  data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now()
+);
+create index if not exists notifications_created_idx on public.notifications(created_at desc);
+create index if not exists notifications_user_idx on public.notifications(user_id, created_at desc);
+
+create table if not exists public.notification_reads (
+  notification_id uuid not null references public.notifications(id) on delete cascade,
+  user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
+  read_at timestamptz not null default now(),
+  primary key (notification_id, user_id)
+);
+
+alter table public.notifications enable row level security;
+alter table public.notification_reads enable row level security;
+
+drop policy if exists notifications_read on public.notifications;
+create policy notifications_read on public.notifications for select to authenticated
+  using (audience = 'all' or user_id = auth.uid() or (audience = 'admins' and public.is_admin()));
+drop policy if exists notifications_admin on public.notifications;
+create policy notifications_admin on public.notifications for all to authenticated
+  using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists notification_reads_own on public.notification_reads;
+create policy notification_reads_own on public.notification_reads for all to authenticated
+  using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+grant select, insert, update, delete on public.notifications, public.notification_reads to authenticated;
+
+-- Max marks of a test (total_marks, else questions × marks_correct)
+create or replace function public.test_max_marks(p_test_id uuid)
+returns numeric language sql stable security definer set search_path = public
+as $$
+  select case when t.total_marks > 0 then t.total_marks
+              else (select count(*) from public.questions q where q.test_id = t.id) * t.marks_correct end
+  from public.tests t where t.id = p_test_id;
+$$;
+grant execute on function public.test_max_marks(uuid) to authenticated;
+
+-- Trigger: test published → broadcast
+create or replace function public.notify_test_published()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+begin
+  if new.is_published and (tg_op = 'INSERT' or not coalesce(old.is_published, false)) then
+    insert into public.notifications(user_id, audience, title, body, type, data)
+    values (null, 'all', 'नया टेस्ट: ' || new.title,
+            'नया टेस्ट उपलब्ध है — ' || new.duration_min || ' मिनट। अभी अभ्यास शुरू करें!',
+            'new_test', jsonb_build_object('test_id', new.id));
+  end if;
+  return new;
+end $$;
+drop trigger if exists tests_publish_notify on public.tests;
+create trigger tests_publish_notify after insert or update of is_published on public.tests
+  for each row execute function public.notify_test_published();
+
+-- Trigger: attempt submitted → personal + admins
+create or replace function public.notify_attempt()
+returns trigger language plpgsql security definer set search_path = public
+as $$
+declare
+  v_title text; v_max numeric; v_name text; v_email text;
+begin
+  begin
+    select title into v_title from public.tests where id = new.test_id;
+    v_max := public.test_max_marks(new.test_id);
+    select coalesce(nullif(p.full_name, ''), split_part(u.email, '@', 1)), u.email
+      into v_name, v_email
+      from auth.users u left join public.profiles p on p.id = u.id where u.id = new.user_id;
+    insert into public.notifications(user_id, audience, title, body, type, data)
+    values (new.user_id, 'user', 'परिणाम: ' || coalesce(v_title, 'टेस्ट'),
+            'आपने ' || coalesce(v_title, 'टेस्ट') || ' में ' || trim(to_char(new.score, 'FM999990.##')) || '/' ||
+              trim(to_char(coalesce(v_max, 0), 'FM999990.##')) || ' अंक पाए',
+            'result', jsonb_build_object('test_id', new.test_id, 'attempt_id', new.id));
+    insert into public.notifications(user_id, audience, title, body, type, data)
+    values (null, 'admins', 'छात्र ने टेस्ट दिया: ' || coalesce(v_name, 'Student'),
+            coalesce(v_name, 'Student') || ' (' || coalesce(v_email, '') || ') ने ' || coalesce(v_title, 'टेस्ट') || ' दिया — स्कोर ' ||
+              trim(to_char(new.score, 'FM999990.##')) || '/' || trim(to_char(coalesce(v_max, 0), 'FM999990.##')) ||
+              ' (सही ' || new.correct || ', ग़लत ' || new.wrong || ')',
+            'submission', jsonb_build_object('test_id', new.test_id, 'attempt_id', new.id, 'user_id', new.user_id));
+  exception when others then null;
+  end;
+  return new;
+end $$;
+drop trigger if exists attempts_notify on public.attempts;
+create trigger attempts_notify after insert on public.attempts
+  for each row execute function public.notify_attempt();
+
+-- My notifications with read state
+create or replace function public.my_notifications(p_limit int default 50)
+returns table(id uuid, title text, body text, type text, data jsonb, created_at timestamptz, is_read boolean)
+language sql stable security definer set search_path = public
+as $$
+  select n.id, n.title, n.body, n.type, n.data, n.created_at,
+         exists (select 1 from public.notification_reads r where r.notification_id = n.id and r.user_id = auth.uid())
+  from public.notifications n
+  where auth.uid() is not null
+    and (n.audience = 'all' or n.user_id = auth.uid() or (n.audience = 'admins' and public.is_admin()))
+    and n.created_at >= coalesce((select u.created_at from auth.users u where u.id = auth.uid()), now()) - interval '30 days'
+  order by n.created_at desc
+  limit greatest(1, least(coalesce(p_limit, 50), 200));
+$$;
+grant execute on function public.my_notifications(int) to authenticated;
+
+create or replace function public.mark_notifications_read(p_ids uuid[] default null)
+returns int language plpgsql security definer set search_path = public
+as $$
+declare v_n int;
+begin
+  if auth.uid() is null then raise exception 'not signed in'; end if;
+  insert into public.notification_reads(notification_id, user_id)
+  select n.id, auth.uid() from public.notifications n
+  where (p_ids is null or n.id = any(p_ids))
+    and (n.audience = 'all' or n.user_id = auth.uid() or (n.audience = 'admins' and public.is_admin()))
+  on conflict do nothing;
+  get diagnostics v_n = row_count;
+  return v_n;
+end $$;
+grant execute on function public.mark_notifications_read(uuid[]) to authenticated;
+
+-- ───────── Test store (all published tests with pack + exam) ─────────
+create or replace view public.store_tests with (security_invoker = true) as
+  select t.id, t.title, t.duration_min, t.total_marks, t.marks_correct, t.is_free, t.language, t.created_at, t.sort,
+         p.id as pack_id, p.title as pack_title, p.is_free as pack_free,
+         e.id as exam_id, e.name as exam_name, e.name_hi as exam_name_hi, e.logo_url as exam_logo,
+         c.id as category_id, c.name as category_name, c.name_hi as category_name_hi,
+         (select count(*) from public.questions q where q.test_id = t.id)::int as question_count
+  from public.tests t
+  join public.packs p on p.id = t.pack_id
+  join public.exams e on e.id = p.exam_id
+  left join public.categories c on c.id = e.category_id
+  where t.is_published and e.is_active;
+grant select on public.store_tests to anon, authenticated;
+
+-- ───────── Admin: students ─────────
+drop function if exists public.admin_students();
+create or replace function public.admin_students()
+returns table(id uuid, email text, full_name text, phone text, state text, exam_interest text,
+              created_at timestamptz, last_active timestamptz, tests_taken bigint, avg_score numeric, avg_pct numeric)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception 'admins only'; end if;
+  return query
+    select u.id, u.email::text, p.full_name, p.phone, p.state, p.exam_interest, u.created_at,
+           greatest(u.last_sign_in_at, (select max(a.created_at) from public.attempts a where a.user_id = u.id)),
+           (select count(*) from public.attempts a where a.user_id = u.id),
+           (select round(avg(a.score), 2) from public.attempts a where a.user_id = u.id),
+           (select round(avg(case when public.test_max_marks(a.test_id) > 0
+                                  then a.score * 100 / public.test_max_marks(a.test_id) end), 1)
+              from public.attempts a where a.user_id = u.id)
+    from auth.users u left join public.profiles p on p.id = u.id
+    order by 8 desc nulls last;
+end $$;
+grant execute on function public.admin_students() to authenticated;
+
+drop function if exists public.admin_student_attempts(uuid);
+create or replace function public.admin_student_attempts(p_user uuid)
+returns table(id uuid, test_id uuid, test_title text, score numeric, max_marks numeric, correct int, wrong int,
+              skipped int, time_taken_sec int, created_at timestamptz)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception 'admins only'; end if;
+  return query
+    select a.id, a.test_id, t.title, a.score, public.test_max_marks(a.test_id), a.correct, a.wrong, a.skipped,
+           a.time_taken_sec, a.created_at
+    from public.attempts a left join public.tests t on t.id = a.test_id
+    where a.user_id = p_user order by a.created_at desc;
+end $$;
+grant execute on function public.admin_student_attempts(uuid) to authenticated;
+
+drop function if exists public.admin_recent_submissions(int);
+create or replace function public.admin_recent_submissions(p_limit int default 50)
+returns table(id uuid, user_id uuid, student text, email text, test_title text, score numeric, max_marks numeric,
+              correct int, wrong int, time_taken_sec int, created_at timestamptz)
+language plpgsql stable security definer set search_path = public
+as $$
+begin
+  if not public.is_admin() then raise exception 'admins only'; end if;
+  return query
+    select a.id, a.user_id, coalesce(nullif(p.full_name, ''), split_part(u.email, '@', 1)), u.email::text, t.title,
+           a.score, public.test_max_marks(a.test_id), a.correct, a.wrong, a.time_taken_sec, a.created_at
+    from public.attempts a
+    left join auth.users u on u.id = a.user_id
+    left join public.profiles p on p.id = a.user_id
+    left join public.tests t on t.id = a.test_id
+    order by a.created_at desc limit greatest(1, least(coalesce(p_limit, 50), 500));
+end $$;
+grant execute on function public.admin_recent_submissions(int) to authenticated;
+
+-- ───────── AI coach context (called by the ai-coach edge function with the user's JWT) ─────────
+create or replace function public.ai_context()
+returns json language plpgsql stable security definer set search_path = public
+as $$
+declare v_uid uuid := auth.uid(); v_admin boolean := public.is_admin(); v json;
+begin
+  if v_uid is null then raise exception 'not signed in'; end if;
+  select json_build_object(
+    'is_admin', v_admin,
+    'me', (select json_build_object('name', p.full_name, 'email', u.email, 'state', p.state, 'exam_interest', p.exam_interest)
+             from auth.users u left join public.profiles p on p.id = u.id where u.id = v_uid),
+    'my_attempts', coalesce((select json_agg(x) from (
+        select t.title as test, a.score, public.test_max_marks(a.test_id) as max, a.correct, a.wrong, a.skipped,
+               a.time_taken_sec as time_sec, to_char(a.created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') as at
+        from public.attempts a left join public.tests t on t.id = a.test_id
+        where a.user_id = v_uid order by a.created_at desc limit 30) x), '[]'::json),
+    'available_tests', coalesce((select json_agg(x) from (
+        select title, exam_name as exam, duration_min, question_count from public.store_tests order by created_at desc limit 40) x), '[]'::json),
+    'students', case when v_admin then coalesce((select json_agg(x) from (
+        select coalesce(nullif(p.full_name, ''), split_part(u.email, '@', 1)) as name, u.email, p.state, p.exam_interest,
+               (select count(*) from public.attempts a where a.user_id = u.id) as tests_taken,
+               (select json_agg(y) from (
+                  select t.title as test, a.score, public.test_max_marks(a.test_id) as max, a.correct, a.wrong,
+                         to_char(a.created_at at time zone 'Asia/Kolkata', 'YYYY-MM-DD HH24:MI') as at
+                  from public.attempts a left join public.tests t on t.id = a.test_id
+                  where a.user_id = u.id order by a.created_at desc limit 15) y) as attempts
+        from auth.users u left join public.profiles p on p.id = u.id
+        order by u.created_at desc limit 200) x), '[]'::json) else null end
+  ) into v;
+  return v;
+end $$;
+grant execute on function public.ai_context() to authenticated;
+
 notify pgrst, 'reload schema';

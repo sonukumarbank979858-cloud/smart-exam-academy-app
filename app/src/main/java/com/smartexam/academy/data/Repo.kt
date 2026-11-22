@@ -168,6 +168,34 @@ class Repo(ctx: Context) {
         }
     }
 
+    // ───────── Test store ─────────
+
+    suspend fun storeTests(categoryId: String? = null, limit: Int = 60): List<StoreTest> {
+        val f = if (categoryId != null) "&category_id=eq.$categoryId" else ""
+        return supa.get("store_tests?select=*$f&order=created_at.desc&limit=$limit").map { StoreTest.from(it) }
+    }
+
+    suspend fun searchTests(q: String): List<StoreTest> {
+        val p = enc("*${q.replace(",", " ").replace("(", " ").replace(")", " ").trim()}*")
+        return supa.get("store_tests?select=*&or=(title.ilike.$p,exam_name.ilike.$p,pack_title.ilike.$p)&order=created_at.desc&limit=30")
+            .map { StoreTest.from(it) }
+    }
+
+    // ───────── Notifications ─────────
+
+    suspend fun notifications(limit: Int = 50): List<AppNotification> =
+        JSONArray(supa.rpc("my_notifications", JSONObject().put("p_limit", limit))).map { AppNotification.from(it) }
+
+    suspend fun markAllRead() { supa.rpc("mark_notifications_read", JSONObject()) }
+
+    // ───────── AI गुरु ─────────
+
+    suspend fun askAi(message: String, history: List<ChatMsg>): String {
+        val h = JSONArray(history.takeLast(12).map { JSONObject().put("role", if (it.fromUser) "user" else "model").put("text", it.text) })
+        val res = supa.function("ai-coach", JSONObject().put("message", message).put("history", h))
+        return res.optString("reply").ifBlank { res.optString("error").ifBlank { "कोई जवाब नहीं मिला" } }
+    }
+
     suspend fun search(q: String): List<Exam> {
         val p = enc("*${q.replace(",", " ").replace("(", " ").replace(")", " ").trim()}*")
         return supa.get("exams?select=*&is_active=eq.true&or=(name.ilike.$p,name_hi.ilike.$p)&order=sort.asc&limit=30")
@@ -221,6 +249,10 @@ class AppPrefs(ctx: Context) {
     var hindiDefault: Boolean
         get() = p.getBoolean("hindi", false)
         set(v) = p.edit().putBoolean("hindi", v).apply()
+    /** created_at of the newest notification already shown as an Android notification. */
+    var lastNotified: String
+        get() = p.getString("last_notified", "") ?: ""
+        set(v) = p.edit().putString("last_notified", v).apply()
     var cachedName: String
         get() = p.getString("name", "") ?: ""
         set(v) = p.edit().putString("name", v).apply()

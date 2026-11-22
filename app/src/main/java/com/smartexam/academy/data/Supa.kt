@@ -73,53 +73,37 @@ class Session(ctx: Context) {
     fun clear() = prefs.edit().clear().apply()
 }
 
-/** Minimal GoTrue + PostgREST client on OkHttp. */
-const val REDIRECT = "smartexam://login-callback"
-
+/** Minimal GoTrue + PostgREST + Edge Functions client on OkHttp. */
 class Supa(ctx: Context) {
     val session = Session(ctx.applicationContext)
     private val http = OkHttpClient.Builder()
         .connectTimeout(20, TimeUnit.SECONDS)
-        .readTimeout(30, TimeUnit.SECONDS)
+        .readTimeout(90, TimeUnit.SECONDS)
         .build()
     private val json = "application/json; charset=utf-8".toMediaType()
     private val refreshLock = Mutex()
 
-    // ───────── Auth (email OTP) ─────────
-
-    suspend fun sendOtp(email: String) {
-        val body = JSONObject().put("email", email.trim()).put("create_user", true)
-        raw("POST", "/auth/v1/otp?redirect_to=" + java.net.URLEncoder.encode(REDIRECT, "UTF-8"), body.toString(), auth = false)
-    }
+    // ───────── Auth (email OTP code only) ─────────
 
     /**
-     * Handles the sign-in link from the email (smartexam://login-callback…).
-     * Supports tokens in the fragment (#access_token=…&refresh_token=…), ?token_hash=…&type=…,
-     * and reports ?error_description=… back as an exception.
+     * Sends a 6-digit code. [createUser] = false for log in (unknown e-mail → [UserNotFound]),
+     * true for sign-up, with [meta] stored as the user's metadata.
      */
-    suspend fun handleCallback(uri: android.net.Uri) {
-        val frag = uri.encodedFragment.orEmpty().split("&").mapNotNull {
-            val i = it.indexOf('='); if (i > 0) it.substring(0, i) to android.net.Uri.decode(it.substring(i + 1)) else null
-        }.toMap()
-        fun p(k: String) = frag[k] ?: uri.getQueryParameter(k)
-        p("error_description")?.let { throw ApiException(400, it.replace('+', ' ')) }
-        val access = p("access_token")
-        if (access != null) {
-            session.save(JSONObject().put("access_token", access).put("refresh_token", p("refresh_token") ?: "")
-                .put("expires_in", (p("expires_in") ?: "3600").toLongOrNull() ?: 3600L))
-            val user = JSONObject(raw("GET", "/auth/v1/user", null, auth = true))
-            session.userId = user.optString("id"); session.email = user.optString("email")
-            return
+    suspend fun sendOtp(email: String, createUser: Boolean, meta: JSONObject? = null) {
+        val body = JSONObject().put("email", email.trim().lowercase()).put("create_user", createUser)
+        if (meta != null) body.put("data", meta)
+        try {
+            raw("POST", "/auth/v1/otp", body.toString(), auth = false)
+        } catch (e: ApiException) {
+            val m = e.message.orEmpty()
+            if (!createUser && (e.code == 422 || e.code == 400 || e.code == 404) &&
+                (m.contains("signup", true) || m.contains("not found", true) || m.contains("otp_disabled", true) || m.contains("not allowed", true)))
+                throw UserNotFound()
+            throw e
         }
-        val hash = p("token_hash")
-        if (hash != null) {
-            val type = p("type") ?: "magiclink"
-            val res = JSONObject(raw("POST", "/auth/v1/verify",
-                JSONObject().put("type", if (type == "signup") "email" else type).put("token_hash", hash).toString(), auth = false))
-            session.save(res); return
-        }
-        throw ApiException(400, "लॉग इन लिंक अधूरा है। ईमेल का नया लिंक या OTP इस्तेमाल करें।")
     }
+
+    class UserNotFound : IOException("खाता नहीं मिला, साइन अप करें")
 
     suspend fun verifyOtp(email: String, token: String) {
         val body = JSONObject().put("type", "email").put("email", email.trim()).put("token", token.trim())
@@ -163,6 +147,17 @@ class Supa(ctx: Context) {
     }
 
     suspend fun rpc(fn: String, args: JSONObject): String = rest("POST", "rpc/$fn", args.toString())
+
+    /** Calls a Supabase Edge Function with the user's JWT. */
+    suspend fun function(name: String, body: JSONObject): JSONObject {
+        ensureFresh()
+        val text = try {
+            raw("POST", "/functions/v1/$name", body.toString(), auth = true)
+        } catch (e: ApiException) {
+            if (e.code == 401 && refresh()) raw("POST", "/functions/v1/$name", body.toString(), auth = true) else throw e
+        }
+        return JSONObject(text)
+    }
 
     private suspend fun rest(method: String, path: String, body: String?, prefer: String? = null): String {
         ensureFresh()

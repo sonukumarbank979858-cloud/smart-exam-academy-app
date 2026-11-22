@@ -22,8 +22,10 @@ sealed class Route {
     data class Leaderboard(val testId: String, val title: String) : Route()
     data object History : Route()
     data object EditProfile : Route()
+    data object Notifications : Route()
+    data object AiGuru : Route()
 
-    val isRoot get() = this is Home || this is Exams || this is Offline || this is Profile
+    val isRoot get() = this is Home || this is Exams || this is Offline || this is Profile || this is AiGuru
 }
 
 class Nav {

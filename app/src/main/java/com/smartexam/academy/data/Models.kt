@@ -129,18 +129,54 @@ data class Banner(val id: String, val imageUrl: String, val link: String?) {
 
 data class Profile(
     val id: String, val fullName: String, val phone: String, val state: String,
-    val district: String, val category: String
+    val district: String, val category: String,
+    val email: String = "", val examInterest: String = ""
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("id", id).put("full_name", fullName).put("phone", phone).put("state", state)
         .put("district", district).put("category", category)
+        .also { if (email.isNotBlank()) it.put("email", email) }
+        .put("exam_interest", examInterest)
 
     companion object {
         fun from(j: JSONObject) = Profile(
-            j.s("id"), j.s("full_name"), j.s("phone"), j.s("state"), j.s("district"), j.s("category")
+            j.s("id"), j.s("full_name"), j.s("phone"), j.s("state"), j.s("district"), j.s("category"),
+            j.s("email"), j.s("exam_interest")
         )
     }
 }
+
+data class AppNotification(
+    val id: String, val title: String, val body: String, val type: String,
+    val createdAt: String, val isRead: Boolean, val testId: String?
+) {
+    companion object {
+        fun from(j: JSONObject) = AppNotification(
+            j.s("id"), j.s("title"), j.s("body"), j.optString("type", "info"), j.s("created_at"),
+            j.optBoolean("is_read", false), j.optJSONObject("data")?.let { d -> if (d.isNull("test_id")) null else d.optString("test_id").ifBlank { null } }
+        )
+    }
+}
+
+/** A published test with its pack / exam / category, for the Home test store. */
+data class StoreTest(
+    val id: String, val title: String, val durationMin: Int, val questionCount: Int, val totalMarks: Double,
+    val marksCorrect: Double, val isFree: Boolean, val packId: String, val packTitle: String,
+    val examId: String, val examName: String, val examLogo: String?, val categoryId: String?, val categoryName: String?
+) {
+    val maxMarks get() = if (totalMarks > 0) totalMarks else questionCount * marksCorrect
+    companion object {
+        fun from(j: JSONObject) = StoreTest(
+            j.s("id"), j.s("title"), j.optInt("duration_min", 15), j.optInt("question_count", 0),
+            j.optDouble("total_marks", 0.0), j.optDouble("marks_correct", 1.0),
+            j.optBoolean("is_free", true) || j.optBoolean("pack_free", false),
+            j.s("pack_id"), j.s("pack_title"), j.s("exam_id"), j.s("exam_name"), j.sn("exam_logo"),
+            j.sn("category_id"), j.sn("category_name_hi") ?: j.sn("category_name")
+        )
+    }
+}
+
+data class ChatMsg(val fromUser: Boolean, val text: String)
 
 /** One finished attempt. [answers] maps question id → chosen option index. */
 data class Attempt(

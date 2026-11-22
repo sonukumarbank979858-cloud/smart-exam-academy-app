@@ -1,8 +1,12 @@
 package com.smartexam.academy
 
+import android.Manifest
 import android.content.Intent
-import android.net.Uri
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
@@ -14,6 +18,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -26,55 +31,56 @@ import com.smartexam.academy.ui.*
 
 class MainActivity : ComponentActivity() {
     private lateinit var repo: Repo
-    /** Sign-in link delivered by the email (smartexam://login-callback…), waiting to be handled. */
-    private val callback = mutableStateOf<Uri?>(null)
+    /** Set when the app is opened from a local notification. */
+    private val openNotifications = mutableStateOf(false)
 
-    private fun takeIntent(i: Intent?) {
-        val d = i?.data ?: return
-        if (d.scheme == "smartexam" && d.host == "login-callback") callback.value = d
-    }
+    private val askNotifPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
-        takeIntent(intent)
+        if (intent.getBooleanExtra("open_notifications", false)) openNotifications.value = true
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         repo = Repo(applicationContext)
-        if (savedInstanceState == null) takeIntent(intent)
+        if (savedInstanceState == null && intent?.getBooleanExtra("open_notifications", false) == true) openNotifications.value = true
+        Notifier.createChannel(this)
         enableEdgeToEdge(statusBarStyle = SystemBarStyle.dark(Brand.Navy.toArgb()))
         setContent {
             var theme by remember { mutableIntStateOf(repo.prefs.theme) }
             AppTheme(theme) {
                 CompositionLocalProvider(LocalRepo provides repo) {
                     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                        Root(callback.value, { callback.value = null }, themeMode = theme, onTheme = { theme = it; repo.prefs.theme = it })
+                        Root(
+                            openNotifications.value, { openNotifications.value = false },
+                            onSignedIn = { onSignedIn() },
+                            themeMode = theme, onTheme = { theme = it; repo.prefs.theme = it }
+                        )
                     }
                 }
             }
         }
     }
+
+    /** After sign-in: background notification checks + Android 13 permission. */
+    private fun onSignedIn() {
+        Notifier.schedule(applicationContext)
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            try { askNotifPermission.launch(Manifest.permission.POST_NOTIFICATIONS) } catch (_: Exception) {}
+        }
+    }
 }
 
-private enum class Gate { CHECKING, CHECKING_AGAIN, LOGIN, PROFILE, MAIN }
+private enum class Gate { CHECKING, LOGIN, PROFILE, MAIN }
 
 @Composable
-private fun Root(callback: Uri?, consumeCallback: () -> Unit, themeMode: Int, onTheme: (Int) -> Unit) {
+private fun Root(openNotifications: Boolean, consumeOpen: () -> Unit, onSignedIn: () -> Unit, themeMode: Int, onTheme: (Int) -> Unit) {
     if (!Config.isConfigured) { NotConfiguredScreen(); return }
     val repo = LocalRepo.current
     var gate by remember { mutableStateOf(if (repo.supa.session.isLoggedIn) Gate.CHECKING else Gate.LOGIN) }
-    var linkError by remember { mutableStateOf<String?>(null) }
-
-    LaunchedEffect(callback) {
-        val uri = callback ?: return@LaunchedEffect
-        consumeCallback()
-        if (repo.supa.session.isLoggedIn && gate != Gate.LOGIN) return@LaunchedEffect
-        gate = Gate.CHECKING
-        gate = try { repo.supa.handleCallback(uri); linkError = null; Gate.CHECKING_AGAIN }
-        catch (e: Exception) { linkError = friendly(e); Gate.LOGIN }
-    }
-    LaunchedEffect(gate) { if (gate == Gate.CHECKING_AGAIN) gate = Gate.CHECKING }
+    LaunchedEffect(gate) { if (gate == Gate.MAIN) onSignedIn() }
 
     LaunchedEffect(gate) {
         if (gate == Gate.CHECKING) {
@@ -94,16 +100,17 @@ private fun Root(callback: Uri?, consumeCallback: () -> Unit, themeMode: Int, on
     }
 
     when (gate) {
-        Gate.CHECKING, Gate.CHECKING_AGAIN -> LoadingBox(Modifier.fillMaxSize())
-        Gate.LOGIN -> LoginScreen(linkError, onDone = { gate = Gate.CHECKING })
+        Gate.CHECKING -> SplashScreen()
+        Gate.LOGIN -> AuthFlow(onDone = { gate = Gate.CHECKING })
         Gate.PROFILE -> ProfileFormScreen(first = true, onDone = { gate = Gate.MAIN }, onBack = null)
-        Gate.MAIN -> MainShell(themeMode, onTheme, onLogout = { gate = Gate.LOGIN })
+        Gate.MAIN -> MainShell(themeMode, onTheme, openNotifications, consumeOpen, onLogout = { gate = Gate.LOGIN })
     }
 }
 
 @Composable
-private fun MainShell(themeMode: Int, onTheme: (Int) -> Unit, onLogout: () -> Unit) {
+private fun MainShell(themeMode: Int, onTheme: (Int) -> Unit, openNotifications: Boolean, consumeOpen: () -> Unit, onLogout: () -> Unit) {
     val nav = remember { Nav() }
+    LaunchedEffect(openNotifications) { if (openNotifications) { consumeOpen(); nav.push(Route.Notifications) } }
     CompositionLocalProvider(LocalNav provides nav) {
         BackHandler(enabled = nav.stack.size > 1 || nav.top !is Route.Home) {
             if (!nav.pop()) nav.tab(Route.Home)
@@ -130,6 +137,8 @@ private fun MainShell(themeMode: Int, onTheme: (Int) -> Unit, onLogout: () -> Un
                     is Route.Leaderboard -> LeaderboardScreen(top.testId, top.title)
                     Route.History -> HistoryScreen()
                     Route.EditProfile -> ProfileFormScreen(first = false, onDone = { nav.pop() }, onBack = { nav.pop() })
+                    Route.Notifications -> NotificationsScreen()
+                    Route.AiGuru -> AiGuruScreen()
                 }
             }
         }
@@ -142,6 +151,7 @@ private fun BottomBar(top: Route, nav: Nav) {
         val items = listOf(
             Triple("होम", Icons.Default.Home, Route.Home),
             Triple("परीक्षाएँ", Icons.Default.List, Route.Exams()),
+            Triple("AI गुरु", Icons.Default.Star, Route.AiGuru),
             Triple("ऑफ़लाइन", Icons.Default.CheckCircle, Route.Offline),
             Triple("प्रोफ़ाइल", Icons.Default.Person, Route.Profile),
         )
@@ -153,8 +163,8 @@ private fun BottomBar(top: Route, nav: Nav) {
                 icon = { Icon(icon, label) },
                 label = { Text(label, fontSize = 11.sp, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal) },
                 colors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = Brand.Orange, selectedTextColor = Brand.Orange,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer
+                    selectedIconColor = MaterialTheme.colorScheme.primary, selectedTextColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.secondaryContainer
                 )
             )
         }

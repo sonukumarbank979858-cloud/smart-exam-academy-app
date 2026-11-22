@@ -82,6 +82,8 @@ fun ProfileScreen(themeMode: Int, onTheme: (Int) -> Unit, onLogout: () -> Unit) 
             Spacer(Modifier.height(10.dp))
             SCard {
                 InfoRow(Icons.Default.DateRange, "पिछले प्रयास (Attempt history)", "अपने सभी टेस्ट प्रयास देखें") { nav.push(Route.History) }
+                InfoRow(Icons.Default.Notifications, "सूचनाएँ (Notifications)", "नए टेस्ट, परिणाम और घोषणाएँ") { nav.push(Route.Notifications) }
+                InfoRow(Icons.Default.Star, "AI गुरु", "अपने AI कोच से पूछें") { nav.tab(Route.AiGuru) }
             }
 
             Spacer(Modifier.height(14.dp))
@@ -98,6 +100,7 @@ fun ProfileScreen(themeMode: Int, onTheme: (Int) -> Unit, onLogout: () -> Unit) 
                 InfoRow(Icons.Default.Place, "राज्य", p?.state ?: "")
                 InfoRow(Icons.Default.LocationOn, "ज़िला", p?.district ?: "")
                 InfoRow(Icons.Default.AccountBox, "श्रेणी", p?.category ?: "")
+                InfoRow(Icons.Default.Star, "परीक्षा की तैयारी", p?.examInterest ?: "")
                 TextButton(onClick = { nav.push(Route.EditProfile) }) { Icon(Icons.Default.Edit, null, Modifier.size(16.dp)); Spacer(Modifier.width(6.dp)); Text("प्रोफ़ाइल बदलें") }
             }
 
@@ -146,7 +149,8 @@ fun ProfileScreen(themeMode: Int, onTheme: (Int) -> Unit, onLogout: () -> Unit) 
                     confirmLogout = false
                     scope.launch {
                         try { repo.syncPending() } catch (_: Exception) {}
-                        repo.supa.logout(); repo.local.clearAll(); repo.prefs.cachedName = ""
+                        repo.supa.logout(); repo.local.clearAll(); repo.prefs.cachedName = ""; repo.prefs.lastNotified = ""
+                        com.smartexam.academy.Notifier.cancel(ctx)
                         onLogout()
                     }
                 }) { Text("लॉग आउट", color = Brand.Red) }

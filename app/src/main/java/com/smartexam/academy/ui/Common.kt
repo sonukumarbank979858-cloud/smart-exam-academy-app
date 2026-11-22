@@ -3,6 +3,11 @@ package com.smartexam.academy.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.LruCache
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -16,12 +21,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.composed
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
@@ -66,18 +75,47 @@ fun friendly(e: Throwable): String = when (e) {
 
 @Composable
 fun <T> LoadBox(l: Loadable<T>, modifier: Modifier = Modifier, content: @Composable (T) -> Unit) {
-    when {
-        l.data != null -> content(l.data)
-        l.loading -> LoadingBox(modifier)
-        else -> ErrorBox(l.error ?: "कुछ गड़बड़ हो गई", modifier, l.reload)
+    val state = when { l.data != null -> 0; l.loading -> 1; else -> 2 }
+    androidx.compose.animation.Crossfade(targetState = state, modifier = modifier, label = "load") { st ->
+        when (st) {
+            0 -> l.data?.let { content(it) }
+            1 -> LoadingBox()
+            else -> ErrorBox(l.error ?: "कुछ गड़बड़ हो गई", Modifier, l.reload)
+        }
     }
 }
 
+/** Shimmering placeholder (skeleton) shown while content loads. */
 @Composable
-fun LoadingBox(modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
-        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+fun LoadingBox(modifier: Modifier = Modifier, rows: Int = 3) {
+    Column(modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        repeat(rows) {
+            Row(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(18.dp)).background(MaterialTheme.colorScheme.surface).padding(14.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Box(Modifier.size(48.dp).clip(RoundedCornerShape(14.dp)).shimmer())
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Box(Modifier.fillMaxWidth(.7f).height(14.dp).clip(RoundedCornerShape(6.dp)).shimmer())
+                    Spacer(Modifier.height(8.dp))
+                    Box(Modifier.fillMaxWidth(.45f).height(11.dp).clip(RoundedCornerShape(6.dp)).shimmer())
+                }
+            }
+        }
     }
+}
+
+/** Animated shimmer background for skeletons. */
+fun Modifier.shimmer(): Modifier = composed {
+    val base = MaterialTheme.colorScheme.surfaceVariant
+    val hi = MaterialTheme.colorScheme.surface
+    val t = rememberInfiniteTransition(label = "shimmer")
+    val x by t.animateFloat(
+        initialValue = -400f, targetValue = 1200f,
+        animationSpec = infiniteRepeatable(tween(1200, easing = LinearEasing)), label = "shimmerX"
+    )
+    background(Brush.linearGradient(listOf(base, hi, base), start = Offset(x, 0f), end = Offset(x + 400f, 200f)))
 }
 
 @Composable
@@ -94,8 +132,13 @@ fun ErrorBox(msg: String, modifier: Modifier = Modifier, retry: (() -> Unit)? = 
 }
 
 @Composable
-fun EmptyBox(msg: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxWidth().padding(32.dp), contentAlignment = Alignment.Center) {
+fun EmptyBox(msg: String, modifier: Modifier = Modifier, icon: ImageVector = Icons.Default.Info) {
+    Column(modifier.fillMaxWidth().padding(32.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+        Box(
+            Modifier.size(72.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
+        ) { Icon(icon, null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(34.dp)) }
+        Spacer(Modifier.height(12.dp))
         Text(msg, textAlign = TextAlign.Center, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
@@ -110,7 +153,8 @@ fun NavyHeader(
     actions: @Composable RowScope.() -> Unit = {},
 ) {
     Row(
-        Modifier.fillMaxWidth().background(Brand.Navy).statusBarsPadding().padding(horizontal = 6.dp, vertical = 10.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(bottomStart = 22.dp, bottomEnd = 22.dp))
+            .background(Brand.HeaderGradient).statusBarsPadding().padding(horizontal = 6.dp, vertical = 12.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         if (onBack != null) {
@@ -148,12 +192,13 @@ fun SCard(
     color: Color = MaterialTheme.colorScheme.surface,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    val shape = RoundedCornerShape(16.dp)
-    val m = modifier.fillMaxWidth().clip(shape)
+    val shape = RoundedCornerShape(18.dp)
+    val m = modifier.fillMaxWidth().shadow(4.dp, shape, ambientColor = Brand.Navy.copy(alpha = .25f), spotColor = Brand.Navy.copy(alpha = .25f))
+        .clip(shape)
         .let { if (onClick != null) it.clickable(onClick = onClick) else it }
     Surface(
-        modifier = m, shape = shape, color = color, tonalElevation = 0.dp, shadowElevation = 1.dp,
-        border = BorderStroke(1.dp, border ?: MaterialTheme.colorScheme.outline.copy(alpha = .5f))
+        modifier = m, shape = shape, color = color, tonalElevation = 0.dp, shadowElevation = 0.dp,
+        border = BorderStroke(1.dp, border ?: MaterialTheme.colorScheme.outline.copy(alpha = .35f))
     ) { Column(Modifier.padding(14.dp), content = content) }
 }
 
@@ -193,11 +238,14 @@ fun StatTile(value: String, label: String, modifier: Modifier = Modifier, valueC
 
 @Composable
 fun BigButton(text: String, modifier: Modifier = Modifier, enabled: Boolean = true, color: Color = Brand.Orange, onClick: () -> Unit) {
-    Button(
-        onClick = onClick, enabled = enabled, modifier = modifier.fillMaxWidth().height(52.dp),
-        shape = RoundedCornerShape(14.dp),
-        colors = ButtonDefaults.buttonColors(containerColor = color, contentColor = Color.White)
-    ) { Text(text, fontWeight = FontWeight.Bold, fontSize = 16.sp) }
+    val shape = RoundedCornerShape(16.dp)
+    val bg = if (!enabled) Brush.linearGradient(listOf(Brand.Grey, Brand.Grey))
+        else if (color == Brand.Orange) Brand.GoldGradient else Brush.linearGradient(listOf(color, color))
+    Box(
+        modifier.fillMaxWidth().height(54.dp).shadow(if (enabled) 6.dp else 0.dp, shape).clip(shape).background(bg)
+            .clickable(enabled = enabled, onClick = onClick),
+        contentAlignment = Alignment.Center
+    ) { Text(text, fontWeight = FontWeight.Bold, fontSize = 16.sp, color = Color.White) }
 }
 
 @Composable

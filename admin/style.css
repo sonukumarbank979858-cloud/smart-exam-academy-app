@@ -1,7 +1,7 @@
-:root{--o:#F57C00;--od:#E65100;--n:#0F2A4A;--nl:#1E4A7A;--bg:#f5f7fb;--b:#d9dee8;--m:#5a6474;--g:#2E7D32;--r:#D32F2F}
+:root{--o:#D99A1E;--od:#A9720A;--n:#1B1F5E;--nl:#3442A8;--bg:#f5f7fb;--b:#d9dee8;--m:#5a6474;--g:#2E7D32;--r:#D32F2F}
 *{box-sizing:border-box}
 body{margin:0;font-family:"Noto Sans Devanagari","Segoe UI",system-ui,sans-serif;background:var(--bg);color:#14181f}
-.top{display:flex;justify-content:space-between;align-items:center;background:var(--n);color:#fff;padding:10px 18px;position:sticky;top:0;z-index:5}
+.top{display:flex;justify-content:space-between;align-items:center;background:linear-gradient(120deg,#12164A,var(--n),var(--nl));color:#fff;padding:10px 18px;position:sticky;top:0;z-index:5}
 .brand{display:flex;gap:10px;align-items:center}.brand small{display:block;opacity:.75;font-size:12px}
 .logo{background:linear-gradient(135deg,var(--o),var(--od));border-radius:10px;padding:8px 9px;font-weight:900}
 .who{font-size:13px;display:flex;gap:10px;align-items:center}
@@ -40,3 +40,16 @@ dialog::backdrop{background:rgba(15,42,74,.45)}
 pre.preview{max-height:260px;overflow:auto;background:#fafbfd;border:1px solid var(--b);border-radius:9px;padding:10px;font-size:12px;white-space:pre-wrap}
 .qtext{max-width:520px}
 @media(max-width:640px){.grid2{grid-template-columns:1fr}td,th{padding:6px;font-size:13px}}
+
+.card{box-shadow:0 4px 18px rgba(27,31,94,.07)}
+.feed{display:flex;flex-direction:column;gap:8px;max-height:520px;overflow:auto}
+.feed .it{border:1px solid var(--b);border-radius:12px;padding:10px 12px;background:#fff}
+.feed .it b{color:var(--n)}.feed .it small{color:var(--m);display:block;margin-top:2px}
+.grid-2{display:grid;grid-template-columns:1fr 1fr;gap:0 16px}
+.chat{display:flex;flex-direction:column;gap:8px;max-height:480px;overflow:auto;padding:8px;background:#f6f7fc;border-radius:12px;border:1px solid var(--b);min-height:160px}
+.bub{max-width:85%;padding:9px 12px;border-radius:14px;white-space:pre-wrap;font-size:14px;line-height:1.5}
+.bub.me{align-self:flex-end;background:var(--n);color:#fff}.bub.ai{align-self:flex-start;background:#fff;border:1px solid var(--b)}
+.sugg{display:flex;gap:6px;flex-wrap:wrap;margin:8px 0}.sugg button{border-radius:20px;font-size:12px}
+tr.click{cursor:pointer}tr.click:hover td{background:#f5f6ff}
+.score{font-weight:800;color:var(--n)}
+@media(max-width:800px){.grid-2{grid-template-columns:1fr}}

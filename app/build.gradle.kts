@@ -27,8 +27,9 @@ android {
         applicationId = "com.smartexam.academy"
         minSdk = 26
         targetSdk = 34
-        versionCode = runNumber
-        versionName = "1.0.$runNumber"
+        // v2 (premium UI, OTP sign-up, notifications, AI गुरु): code jumps past every v1 build.
+        versionCode = 1000 + runNumber
+        versionName = "2.0.$runNumber"
         buildConfigField("String", "SUPABASE_URL", "\"${cfg("SUPABASE_URL").trimEnd('/')}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${cfg("SUPABASE_ANON_KEY")}\"")
         vectorDrawables { useSupportLibrary = true }
@@ -73,4 +74,5 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.security:security-crypto:1.0.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
 }

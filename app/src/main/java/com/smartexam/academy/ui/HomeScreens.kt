@@ -53,28 +53,42 @@ fun HomeScreen() {
     val results = rememberLoad(query) {
         if (query.trim().length < 2) emptyList() else { delay(300); repo.search(query) }
     }
+    val testResults = rememberLoad(query, "t") {
+        if (query.trim().length < 2) emptyList() else { delay(300); repo.searchTests(query) }
+    }
     val myExams = remember { repo.prefs.myExams() }
+    var storeCat by remember { mutableStateOf<String?>(null) }
+    val store = rememberLoad(storeCat, "store") { repo.storeTests(storeCat) }
+    var paid by remember { mutableStateOf(false) }
+    if (paid) PaidDialog { paid = false }
 
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 24.dp)) {
         item {
-            Column(Modifier.fillMaxWidth().background(Brand.Navy).statusBarsPadding().padding(16.dp)) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(bottomStart = 28.dp, bottomEnd = 28.dp))
+                    .background(Brand.HeaderGradient).statusBarsPadding().padding(16.dp)
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Welcome back 👋", color = Color.White.copy(alpha = .75f), fontSize = 12.sp)
-                        Text("नमस्ते ${name.ifBlank { "विद्यार्थी" }.substringBefore(" ")}", color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Bold)
-                    }
                     Box(
-                        Modifier.size(40.dp).clip(CircleShape).background(Brand.Orange).clickable { nav.tab(Route.Profile) },
+                        Modifier.size(44.dp).clip(CircleShape).background(Brand.GoldGradient).clickable { nav.tab(Route.Profile) },
                         contentAlignment = Alignment.Center
-                    ) { Text(name.take(1).uppercase().ifBlank { "S" }, color = Color.White, fontWeight = FontWeight.Bold) }
+                    ) { Text(name.take(1).uppercase().ifBlank { "S" }, color = Brand.Navy, fontWeight = FontWeight.Black, fontSize = 18.sp) }
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("नमस्ते 👋", color = Color.White.copy(alpha = .75f), fontSize = 12.sp)
+                        Text(name.ifBlank { "विद्यार्थी" }.substringBefore(" "), color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.ExtraBold)
+                    }
+                    NotificationBell()
                 }
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(10.dp))
+                Text("आज कौन सा टेस्ट देंगे?", color = Brand.GoldLight, fontSize = 14.sp, fontWeight = FontWeight.SemiBold)
+                Spacer(Modifier.height(10.dp))
                 TextField(
                     value = query, onValueChange = { query = it },
-                    placeholder = { Text("परीक्षा खोजें (Search exam)") },
+                    placeholder = { Text("परीक्षा या टेस्ट खोजें (Search)") },
                     leadingIcon = { Icon(Icons.Default.Search, null) },
                     trailingIcon = { if (query.isNotEmpty()) IconButton(onClick = { query = "" }) { Icon(Icons.Default.Clear, "साफ़ करें") } },
-                    singleLine = true, shape = RoundedCornerShape(14.dp),
+                    singleLine = true, shape = RoundedCornerShape(16.dp),
                     colors = TextFieldDefaults.colors(
                         focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
                         focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface
@@ -85,13 +99,19 @@ fun HomeScreen() {
         }
 
         if (query.trim().length >= 2) {
-            item { SectionTitle("खोज परिणाम") }
             val r = results.data
-            when {
-                r == null -> item { LoadingBox() }
-                r.isEmpty() -> item { EmptyBox("“$query” से कोई परीक्षा नहीं मिली") }
-                else -> items(r) { e -> ExamRow(e) { nav.push(Route.ExamDetail(e.id)) } }
+            val rt = testResults.data
+            if (r == null && rt == null) { item { LoadingBox() }; return@LazyColumn }
+            if (!r.isNullOrEmpty()) {
+                item { SectionTitle("परीक्षाएँ") }
+                items(r) { e -> ExamRow(e) { nav.push(Route.ExamDetail(e.id)) } }
             }
+            if (!rt.isNullOrEmpty()) {
+                item { SectionTitle("टेस्ट") }
+                items(rt, key = { "s" + it.id }) { t -> StoreTestCard(t, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { paid = true } }
+            }
+            if (r.isNullOrEmpty() && rt.isNullOrEmpty() && !results.loading && !testResults.loading)
+                item { EmptyBox("“$query” से कोई परीक्षा या टेस्ट नहीं मिला", icon = Icons.Default.Search) }
             return@LazyColumn
         }
 
@@ -125,6 +145,24 @@ fun HomeScreen() {
                     }
                 }
             }
+        }
+
+        item { Spacer(Modifier.height(14.dp)); AiPromoCard(Modifier.padding(horizontal = 16.dp)) }
+
+        item {
+            SectionTitle("टेस्ट स्टोर • सभी टेस्ट", Modifier.padding(top = 12.dp))
+            val cl = cats.data ?: emptyList()
+            val labels = listOf("सभी") + cl.map { it.nameHi ?: it.name }
+            val idx = if (storeCat == null) 0 else cl.indexOfFirst { it.id == storeCat } + 1
+            ChipRow(labels, idx.coerceAtLeast(0)) { i -> storeCat = if (i == 0) null else cl[i - 1].id }
+            Spacer(Modifier.height(6.dp))
+        }
+        val st = store.data
+        when {
+            st == null && store.loading -> item { LoadingBox(rows = 2) }
+            st == null -> item { ErrorBox(store.error ?: "", retry = store.reload) }
+            st.isEmpty() -> item { EmptyBox("इस श्रेणी में अभी कोई टेस्ट प्रकाशित नहीं हुआ है", icon = Icons.Default.List) }
+            else -> items(st.take(12), key = { "st" + it.id }) { t -> StoreTestCard(t, Modifier.padding(horizontal = 16.dp, vertical = 5.dp)) { paid = true } }
         }
 
         item {

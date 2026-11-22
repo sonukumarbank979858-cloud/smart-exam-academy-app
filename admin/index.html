@@ -18,12 +18,12 @@
   <!-- Login -->
   <section id="login" class="card narrow hidden">
     <h2>एडमिन लॉग इन</h2>
-    <p class="muted">अपना एडमिन ईमेल डालें। ईमेल में आए “Sign in” लिंक को इसी ब्राउज़र में खोलें, या 6 अंकों का कोड हो तो नीचे डालें।</p>
+    <p class="muted">अपना एडमिन ईमेल डालें। ईमेल पर आया 6 अंकों का OTP नीचे डालें।</p>
     <label>ईमेल<input id="email" type="email" placeholder="you@gmail.com" autocomplete="email"></label>
-    <button id="sendOtp" class="primary">लॉग इन ईमेल भेजें</button>
+    <button id="sendOtp" class="primary">OTP भेजें</button>
     <div id="otpBox" class="hidden">
-      <label>6 अंकों का कोड<input id="otp" inputmode="numeric" maxlength="6" placeholder="123456"></label>
-      <button id="verifyOtp" class="primary">कोड से लॉग इन</button>
+      <label>6 अंकों का OTP<input id="otp" inputmode="numeric" maxlength="6" placeholder="123456" autocomplete="one-time-code"></label>
+      <button id="verifyOtp" class="primary">लॉग इन करें</button>
     </div>
     <p id="loginMsg" class="msg"></p>
   </section>
